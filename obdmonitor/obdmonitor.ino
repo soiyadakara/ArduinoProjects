@@ -10,44 +10,7 @@
 #define OLED_RESET 4
 Adafruit_SSD1306 display(OLED_RESET);
 
-static const unsigned char PROGMEM batterymark[] = {
-  0b00000000,
-  0b00000000,
-  0b00111100,
-  0b11000011,
-  0b10000001,
-  0b10000001,
-  0b10000001,
-  0b10111101,
-  0b10000001,
-  0b10111101,
-  0b10000001,
-  0b10111101,
-  0b10000001,
-  0b11111111,
-  0b00000000,
-  0b00000000,
-};
-static const unsigned char PROGMEM hotwatermark[] = {
-  0b00000000, 0b00000000,
-  0b00000001, 0b00000000,
-  0b00001000, 0b10100000,
-  0b00000100, 0b10010000,
-  0b00000110, 0b01010000,
-  0b00000010, 0b01010000,
-  0b00000100, 0b10010000,
-  0b00101001, 0b10110100,
-  0b01101001, 0b00100110,
-  0b11000101, 0b00010011,
-  0b10000000, 0b10000001,
-  0b11000000, 0b00000011,
-  0b01100000, 0b00000110,
-  0b00111100, 0b00111100,
-  0b00000111, 0b11100000,
-};
-
-
-#define CAN0_INT 7                              // Set INT to pin 2
+#define CAN0_INT 2                              // Set INT to pin 2
 MCP_CAN CAN0(10);                               // Set CS to pin 10
 
 volatile bool refleshDisplay = true;
@@ -55,25 +18,25 @@ long unsigned int rxId;
 unsigned char len = 0;
 unsigned char rxBuf[8];
 
-unsigned int tacho;
-unsigned char coolanttemp;
-unsigned char vspeed;
-float HVlife;
+volatile unsigned int tacho;
+volatile unsigned char coolanttemp;
+volatile unsigned char vspeed;
+volatile float HVlife;
 void readCANMsg() {
   CAN0.readMsgBuf(&rxId, &len, rxBuf);      // Read data: len = data length, buf = data byte(s)
-  if (rxId == 0x18DAF105) {
+  if ((rxId & 0x1FFFFFFF) == 0x18DAF105) {
     switch (rxBuf[2]) {
       case 0x05: //coolant
-        coolanttemp = rxBuf[2] - 40;
+        coolanttemp = (unsigned char)rxBuf[3] - 40;
         break;
       case 0x0c: //tacho
-        tacho = ((unsigned int)rxBuf[2] * 256 + rxBuf[3]) / 4;
+        tacho = ((unsigned int)rxBuf[3] * 256 + rxBuf[4]) / 4;
         break;
       case 0x0d: //speed
-        vspeed = rxBuf[2];
+        vspeed = rxBuf[3];
         break;
       case 0x5B: //HV remaining life
-        HVlife = (float)rxBuf[2] * 100 / 255;
+        HVlife = (float)rxBuf[3] * 100 / 255;
         break;
     }
     refleshDisplay = true;
@@ -82,7 +45,7 @@ void readCANMsg() {
 
 void setup()   {
   Serial.begin(115200);
-  delay(2000);
+  delay(2000); 
 
   // initialize display
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3C (for the 128x32)
@@ -91,15 +54,10 @@ void setup()   {
   // text display tests
   display.setTextSize(2);
   display.setTextColor(WHITE);
-  display.drawBitmap(0, 0, batterymark, 8, 16, 1);
-  display.drawBitmap(8, 0, hotwatermark, 16, 16, 1);
-  display.setCursor(24, 0);
-  display.println("SOC:80% TMP: 90℃");
-  display.setCursor(0, 16);
-  display.println("hoge!");
-  display.display();
-  delay(2000);
-  display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("1234567890ABCDEF");
+    display.display();
+    delay(2000);
 
   // initialize CANBUS
   if (CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ) == CAN_OK)
@@ -110,43 +68,60 @@ void setup()   {
   CAN0.setMode(MCP_NORMAL);                     // Set operation mode to normal so the MCP2515 sends acks to received data.
 
   pinMode(CAN0_INT, INPUT);                            // Configuring pin for /INT input
-  attachInterrupt(digitalPinToInterrupt(CAN0_INT), readCANMsg, FALLING);
+  attachInterrupt(digitalPinToInterrupt(CAN0_INT), readCANMsg, LOW);
 
   Serial.println("MCP2515 Library Receive Example...");
 }
 
 byte data[8] = {0x02, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00};
+char strbuf[16];
 
 volatile unsigned long prevtimemillis = 0;
 void loop() {
   if (refleshDisplay)                        // If CAN0_INT pin is low, read receive buffer
   {
     refleshDisplay = false;
-
-    display.clearDisplay();
-    display.drawBitmap(0, 0, hotwatermark, 16, 16, 1);
-    display.setCursor(17, 0);
-    display.print(coolanttemp);
-    display.setCursor(64, 0);
-    display.println(tacho);
-    display.setCursor(0, 16);
-    display.print(vspeed);
-    display.drawBitmap(64, 16, batterymark, 8, 16, 1);
-    display.setCursor(73, 16);
-    display.println(HVlife);
-    display.display();
     
+    display.clearDisplay();
+    // speed
+    display.setCursor(0, 0);
+    sprintf(strbuf, "%4d", vspeed);
+    display.print(strbuf);
+    // coolant temp
+    display.setCursor(80, 0);
+    sprintf(strbuf, "%3d", coolanttemp);
+    display.print(strbuf);
+    // tacho
+    display.setCursor(0, 16);
+    sprintf(strbuf, "%4d", tacho);
+    display.print(strbuf);
+    // HV battery
+    display.setCursor(56, 16);
+    dtostrf(HVlife, 5, 1, strbuf);
+    display.print(strbuf);
+    display.display();
+
+ /*    Serial.println(coolanttemp); 
+    Serial.println(tacho); 
+    Serial.println(vspeed); 
+    Serial.println(HVlife); 
     Serial.println("reflesh!");
-  }
-  if(millis() - prevtimemillis > 500){
+    Serial.println(len);
+*/ }
+  if(millis() - prevtimemillis > 250){
     data[2] = 0x05; // coolant temp
     CAN0.sendMsgBuf(0x18DB33F1, CAN_EXTID, 8, data);
+    delay(50);
     data[2] = 0x0c; // tacho
     CAN0.sendMsgBuf(0x18DB33F1, CAN_EXTID, 8, data);
+    delay(50);
     data[2] = 0x0d; // speed
     CAN0.sendMsgBuf(0x18DB33F1, CAN_EXTID, 8, data);
+    delay(50);
     data[2] = 0x5B; // HV battery life
     CAN0.sendMsgBuf(0x18DB33F1, CAN_EXTID, 8, data);
+    delay(50);
     prevtimemillis = millis();
+    refleshDisplay = true;
   }
 }
